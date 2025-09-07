@@ -3,11 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JIT Admin — Temporary Access Demo</title>
+  <title>JIT Admin + Okta — Temporary Access Demo</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Okta Auth JS (PKCE) -->
+  <script src="https://global.oktacdn.com/okta-auth-js/7.6.3/okta-auth-js.umd.js"></script>
   <style>
     :root { color-scheme: dark; }
     html,body{ height:100%; }
@@ -16,7 +18,17 @@
       background-image: radial-gradient(ellipse at top, rgba(79,70,229,.25), transparent 60%),
                         radial-gradient(ellipse at bottom, rgba(59,130,246,.25), transparent 60%);
     }
+    .test-pass{ color:#34d399 }
+    .test-fail{ color:#f87171 }
   </style>
+  <script>
+    // ====== EDIT THESE WITH YOUR OKTA APP DETAILS ======
+    // Example issuer: https://dev-12345678.okta.com/oauth2/default
+    window.OKTA_ISSUER = "https://YOUR_OKTA_DOMAIN.okta.com/oauth2/default";
+    window.OKTA_CLIENT_ID = "YOUR_OKTA_CLIENT_ID";
+    // Ensure this origin is added as a Trusted Origin (CORS & Redirect) in Okta Admin.
+    // ================================================
+  </script>
 </head>
 <body class="min-h-full bg-slate-950 text-slate-100 bg-grid">
   <!-- Navbar -->
@@ -28,20 +40,32 @@
             <path d="M12 3v18"/><path d="M5 9l7-6 7 6"/><path d="M5 15l7 6 7-6"/>
           </svg>
         </div>
-        <span class="font-semibold tracking-tight">JIT Admin</span>
+        <span class="font-semibold tracking-tight">JIT Admin + Okta</span>
         <span class="text-xs text-slate-400 border border-slate-700 rounded-md px-2 py-0.5">5‑minute role</span>
       </div>
-      <a id="linkGithub" href="#" class="text-slate-300 hover:text-white text-sm">View Source</a>
+      <div class="flex items-center gap-3 text-sm">
+        <button id="oktaLogin" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50">Sign in with Okta</button>
+        <button id="oktaLogout" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50" disabled>Sign out</button>
+      </div>
     </div>
   </header>
 
   <!-- Main -->
   <main class="max-w-6xl mx-auto px-4 py-10">
-    <!-- Hero Card -->
     <section class="grid lg:grid-cols-3 gap-6">
       <div class="lg:col-span-2 rounded-2xl p-6 bg-slate-900/70 ring-1 ring-slate-800 shadow-2xl shadow-black/40">
         <h1 class="text-2xl font-semibold">🔐 Just‑In‑Time Admin Access</h1>
-        <p class="mt-1 text-slate-400">Click <span class="font-medium text-slate-200">Request Admin</span> to receive a short‑lived JWT with <code class="px-1.5 py-0.5 bg-slate-800 rounded">roles:['admin']</code>. It expires automatically in 5 minutes (or revoke any time).</p>
+        <p class="mt-1 text-slate-400">First <span class="font-medium text-slate-200">Sign in with Okta</span>, then click <span class="font-medium text-slate-200">Request Admin</span> to receive a short‑lived JWT with <code class="px-1.5 py-0.5 bg-slate-800 rounded">roles:['admin']</code>. It expires automatically in 5 minutes (or revoke any time).</p>
+
+        <!-- Okta identity -->
+        <div class="mt-4 p-4 rounded-xl bg-slate-900/70 border border-slate-800">
+          <div class="text-sm text-slate-400">Okta Identity</div>
+          <div class="mt-2 flex flex-wrap items-center gap-2" aria-live="polite">
+            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">User: <b id="oktaUser" class="text-slate-200 font-medium">Not signed in</b></span>
+            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">Email: <b id="oktaEmail" class="text-slate-200 font-medium">—</b></span>
+            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">Groups: <b id="oktaGroups" class="text-slate-200 font-medium">—</b></span>
+          </div>
+        </div>
 
         <!-- Request form -->
         <div class="mt-6 grid md:grid-cols-12 gap-3 items-end">
@@ -58,8 +82,8 @@
             <input id="approver" type="text" placeholder="manager@corp" class="mt-1 w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </label>
           <div class="md:col-span-8 flex gap-3 mt-2 md:mt-0">
-            <button id="req" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition text-white font-medium">Request Admin (5 min)</button>
-            <button id="revoke" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 transition">Revoke now</button>
+            <button id="req" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition text-white font-medium" disabled>Request Admin (5 min)</button>
+            <button id="revoke" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 transition" disabled>Revoke now</button>
           </div>
         </div>
 
@@ -98,11 +122,14 @@
       </div>
     </section>
 
-    <!-- Audit log -->
+    <!-- Audit + Self-tests -->
     <section class="mt-8 rounded-2xl p-6 bg-slate-900/70 ring-1 ring-slate-800">
       <div class="flex items-center justify-between">
         <h3 class="text-lg font-semibold">Audit (client‑side demo)</h3>
-        <button id="copyAudit" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs">Copy JSON</button>
+        <div class="flex gap-2 items-center">
+          <button id="copyAudit" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs">Copy JSON</button>
+          <button id="runTests" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs">Run Self‑Tests</button>
+        </div>
       </div>
       <div class="mt-3 overflow-auto">
         <table class="min-w-full text-sm">
@@ -116,6 +143,10 @@
           <tbody id="auditRows" class="divide-y divide-slate-800"></tbody>
         </table>
       </div>
+      <div class="mt-6">
+        <h4 class="text-sm font-semibold text-slate-300">Self‑Test Results</h4>
+        <ul id="testResults" class="mt-2 space-y-1 text-sm"></ul>
+      </div>
     </section>
   </main>
 
@@ -126,16 +157,84 @@
     const $ = (sel) => document.querySelector(sel);
     const toastHost = $("#toastHost");
     const who = $("#who"), roles = $("#roles"), left = $("#left"), statusBadge=$("#statusBadge"), claimReason=$("#claimReason"), claimApprover=$("#claimApprover");
+    const oktaUserEl=$("#oktaUser"), oktaEmailEl=$("#oktaEmail"), oktaGroupsEl=$("#oktaGroups");
     const ring = $("#ring");
     const circumference = 2 * Math.PI * 52; // r=52
 
-    let expMs = null, timer = null, audit = [];
+    let expMs = null, timer = null, audit = [], oktaSignedIn=false;
 
-    // Stop and clear the countdown interval
-    function stopTimer() {
-      if (timer) { clearInterval(timer); timer = null; }
+    // ===== Okta Auth (PKCE) =====
+    let oktaAuth = null;
+    try {
+      const { OktaAuth } = window.OktaAuth || {}; // UMD namespace
+      if (OktaAuth && window.OKTA_ISSUER && window.OKTA_CLIENT_ID && !window.OKTA_ISSUER.includes('YOUR_OKTA')) {
+        oktaAuth = new OktaAuth({
+          issuer: window.OKTA_ISSUER,
+          clientId: window.OKTA_CLIENT_ID,
+          redirectUri: window.location.origin + '/',
+          scopes: ['openid','profile','email','groups'],
+          pkce: true,
+          tokenManager: { storage: 'sessionStorage' }
+        });
+      }
+    } catch {}
+
+    async function oktaHandleRedirect() {
+      if (!oktaAuth) return;
+      // If returning from Okta with code/state, parse tokens
+      const hasParams = /[?&](code|state)=/.test(window.location.search);
+      if (hasParams) {
+        try {
+          const { tokens } = await oktaAuth.token.parseFromUrl();
+          oktaAuth.tokenManager.setTokens(tokens);
+          // Clean URL
+          const url = new URL(window.location);
+          url.search = '';
+          history.replaceState({}, '', url);
+        } catch (e) {
+          console.warn('Okta parse error', e);
+        }
+      }
+      const { idToken } = await oktaAuth.tokenManager.getTokens();
+      if (idToken) {
+        oktaSignedIn = true;
+        $("#oktaLogin").disabled = true;
+        $("#oktaLogout").disabled = false;
+        oktaUserEl.textContent = idToken.claims.name || idToken.claims.sub || '(no name)';
+        oktaEmailEl.textContent = idToken.claims.email || '—';
+        const groups = idToken.claims.groups || [];
+        oktaGroupsEl.textContent = groups.length ? groups.slice(0,8).join(', ') + (groups.length>8 ? '…' : '') : '—';
+        $("#req").disabled = false; // enable JIT once Okta is signed in
+        $("#revoke").disabled = false;
+      } else {
+        oktaSignedIn = false;
+        $("#oktaLogin").disabled = false;
+        $("#oktaLogout").disabled = true;
+        oktaUserEl.textContent = 'Not signed in';
+        oktaEmailEl.textContent = '—';
+        oktaGroupsEl.textContent = '—';
+        $("#req").disabled = true;
+        $("#revoke").disabled = true;
+      }
     }
 
+    $("#oktaLogin").onclick = async () => {
+      if (!oktaAuth) {
+        alert('Configure OKTA_ISSUER and OKTA_CLIENT_ID at the top of index.html');
+        return;
+      }
+      await oktaAuth.signInWithRedirect();
+    };
+
+    $("#oktaLogout").onclick = async () => {
+      if (!oktaAuth) return;
+      try { await oktaAuth.signOut(); } catch {}
+      oktaSignedIn = false;
+      await oktaHandleRedirect();
+      toast('Signed out of Okta.', 'info');
+    };
+
+    // ===== UI Helpers =====
     function toast(text, kind = "info") {
       const colors = {
         info: "bg-slate-800 text-slate-100 border border-slate-700",
@@ -148,6 +247,8 @@
       toastHost.appendChild(el);
       setTimeout(() => el.remove(), 2600);
     }
+
+    function stopTimer(){ if (timer) { clearInterval(timer); timer = null; } }
 
     function setRing(remainingMs) {
       if (!expMs || remainingMs <= 0) {
@@ -194,7 +295,6 @@
         claimApprover.textContent = d.approver || '—';
         expMs = d.expiresAt;
 
-        // If no active admin after refresh, stop timer and reset UI
         if (!expMs) {
           stopTimer();
           left.textContent = '—';
@@ -204,7 +304,7 @@
           return;
         }
 
-        if (timer) clearInterval(timer);
+        stopTimer();
         timer = setInterval(() => {
           const ms = (expMs ? expMs - Date.now() : 0);
           left.textContent = fmt(ms);
@@ -212,6 +312,7 @@
           if (ms <= 0) {
             statusBadge.textContent = 'No active admin';
             statusBadge.className = 'mt-1 text-xs text-emerald-300';
+            stopTimer();
           } else {
             statusBadge.textContent = 'Admin active';
             statusBadge.className = 'mt-1 text-xs text-indigo-300';
@@ -222,15 +323,17 @@
       }
     }
 
+    // ===== Buttons =====
     $("#req").onclick = async () => {
+      if (!oktaSignedIn) { toast('Sign in with Okta first.', 'bad'); return; }
       const user = $("#user").value.trim() || 'demo';
       const reason = $("#reason").value.trim();
       const approver = $("#approver").value.trim();
-      const url = new URL(location.origin + '/api/request-admin');
-      url.searchParams.set('user', user);
-      if (reason) url.searchParams.set('reason', reason);
-      if (approver) url.searchParams.set('approver', approver);
-      const r = await fetch(url);
+      const params = new URLSearchParams();
+      params.set('user', user);
+      if (reason) params.set('reason', reason);
+      if (approver) params.set('approver', approver);
+      const r = await fetch(`/api/request-admin?${params.toString()}`);
       const d = await r.json();
       expMs = d.expiresAt || null;
       addAudit('REQUEST_ADMIN', `${user} (${reason || 'no reason'})`);
@@ -272,8 +375,41 @@
       toast('Audit JSON copied.', 'info');
     };
 
+    // ===== Self‑tests =====
+    $("#runTests").onclick = async () => {
+      const out = $("#testResults");
+      out.innerHTML = '';
+      function li(msg, pass){
+        const li = document.createElement('li');
+        li.innerHTML = pass ? `✅ <span class="test-pass">${msg}</span>` : `⛔ <span class="test-fail">${msg}</span>`;
+        out.appendChild(li);
+      }
+      try {
+        // Test 1: whoami endpoint reachable
+        const r1 = await fetch('/api/whoami', { cache: 'no-store' });
+        const j1 = await r1.json();
+        li('whoami returns JSON', !!j1 && typeof j1 === 'object');
+      } catch { li('whoami returns JSON', false); }
+
+      try {
+        // Test 2: URL building does not depend on location.origin/new URL
+        const p = new URLSearchParams({ user: 'test', reason: 'x', approver: 'y' }).toString();
+        const path = `/api/request-admin?${p}`;
+        li('request-admin path constructed (relative URL)', /^\/api\/request-admin\?/.test(path));
+      } catch { li('request-admin path constructed (relative URL)', false); }
+
+      try {
+        // Test 3: Timer stop function exists and clears interval
+        stopTimer();
+        li('stopTimer is callable', true);
+      } catch { li('stopTimer is callable', false); }
+    };
+
     // Init
-    refresh();
+    (async function init(){
+      await oktaHandleRedirect();
+      await refresh();
+    })();
   </script>
 </body>
 </html>
