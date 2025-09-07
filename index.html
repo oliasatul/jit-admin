@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>JIT Admin — Temporary Access Demo</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#0b1020; color:#e7ecff; margin:0; }
+    .wrap { max-width: 820px; margin: 48px auto; padding: 0 20px; }
+    .card { background:#121935; border:1px solid #243060; border-radius:16px; padding:24px; box-shadow: 0 10px 30px rgba(0,0,0,.25);}
+    h1 { margin:0 0 8px; font-size:28px;}
+    .muted { color:#9fb0ff; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; margin:16px 0; }
+    input[type=text]{ flex:1; padding:12px 14px; border-radius:10px; border:1px solid #2d3b6b; background:#0f1630; color:#e7ecff; }
+    button { padding:12px 16px; border:1px solid #2d3b6b; background:#1a2660; color:#fff; border-radius:10px; cursor:pointer; }
+    button:hover{ background:#203076; }
+    .pill { display:inline-block; padding:6px 10px; border-radius:999px; background:#1e2a62; border:1px solid #2d3b6b; font-size:12px; margin-right:6px;}
+    .ok { color:#7dff94; }
+    .bad { color:#ff8b7d; }
+    .sep { height:1px; background:#22305f; margin:20px 0; }
+    .count { font-variant-numeric: tabular-nums; font-size:18px; }
+    code { background:#0f1630; padding:2px 6px; border-radius:6px; border:1px solid #2d3b6b; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>🔐 JIT Admin (5-minute temporary access)</h1>
+      <p class="muted">Click “Request Admin” → you get a short-lived admin role (JWT in HttpOnly cookie). When the timer hits zero, access vanishes.</p>
+
+      <div class="row">
+        <input id="user" type="text" placeholder="Your username (e.g., alice)" />
+        <button id="req">Request Admin (5 min)</button>
+        <button id="revoke">Revoke now</button>
+      </div>
+
+      <div class="row">
+        <span class="pill">User: <b id="who">—</b></span>
+        <span class="pill">Roles: <b id="roles">—</b></span>
+        <span class="pill">Expires in: <b id="left" class="count">—</b></span>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="row">
+        <button id="adminAction">Run Admin Action</button>
+        <span id="actionMsg"></span>
+      </div>
+
+      <div class="sep"></div>
+
+      <p class="muted"><b>How it works (kid-simple):</b> we give you a magic ticket (token) that says “<code>roles:['admin']</code>”. The ticket auto-destroys in 5 minutes. Then it stops opening the “admin door.”</p>
+      <p class="muted">Demo only — don’t use in prod as-is (no DB, no audit, no refresh). Great for showing **time-bound privilege** and **server-side checks**.</p>
+    </div>
+  </div>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const who = $("#who"), roles = $("#roles"), left = $("#left");
+    const msg = $("#actionMsg");
+
+    let expMs = null, timer = null;
+
+    function fmtLeft(ms) {
+      if (!ms || ms <= 0) return "expired";
+      const s = Math.floor(ms/1000);
+      const m = Math.floor(s/60);
+      const r = s % 60;
+      return `${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`;
+    }
+
+    function tick() {
+      if (!expMs) { left.textContent = "—"; return; }
+      const ms = expMs - Date.now();
+      left.textContent = fmtLeft(ms);
+      if (ms <= 0) refresh();
+    }
+
+    async function refresh() {
+      try {
+        const r = await fetch("/api/whoami");
+        const d = await r.json();
+        who.textContent = d.user || "—";
+        roles.textContent = (d.roles && d.roles.length) ? d.roles.join(", ") : "—";
+        expMs = d.expiresAt;
+        if (timer) clearInterval(timer);
+        timer = setInterval(tick, 1000);
+        tick();
+      } catch {
+        who.textContent = "—";
+        roles.textContent = "—";
+        left.textContent = "—";
+      }
+    }
+
+    $("#req").onclick = async () => {
+      const user = $("#user").value.trim() || "demo";
+      const r = await fetch(`/api/request-admin?user=${encodeURIComponent(user)}`);
+      const d = await r.json();
+      expMs = d.expiresAt || null;
+      await refresh();
+    };
+
+    $("#revoke").onclick = async () => {
+      await fetch("/api/revoke");
+      expMs = null;
+      await refresh();
+    };
+
+    $("#adminAction").onclick = async () => {
+      msg.textContent = "…";
+      const r = await fetch("/api/admin-action");
+      const d = await r.json();
+      if (d.ok) { msg.innerHTML = `<span class="ok">✅ ${d.message}</span>`; }
+      else { msg.innerHTML = `<span class="bad">⛔ ${d.error || "Denied"}</span>`; }
+    };
+
+    // initial
+    refresh();
+  </script>
+</body>
+</html>
