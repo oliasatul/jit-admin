@@ -165,19 +165,43 @@
 
     // ===== Okta Auth (PKCE) =====
     let oktaAuth = null;
-    try {
-      const { OktaAuth } = window.OktaAuth || {}; // UMD namespace
-      if (OktaAuth && window.OKTA_ISSUER && window.OKTA_CLIENT_ID && !window.OKTA_ISSUER.includes('YOUR_OKTA')) {
-        oktaAuth = new OktaAuth({
-          issuer: window.OKTA_ISSUER,
-          clientId: window.OKTA_CLIENT_ID,
-          redirectUri: window.location.origin + '/',
+
+    async function getOktaConfig(){
+      let issuer = window.OKTA_ISSUER;
+      let clientId = window.OKTA_CLIENT_ID;
+      const needsFetch = !issuer || issuer.includes('YOUR_OKTA') || !clientId || clientId.includes('YOUR_OKTA');
+      if (needsFetch) {
+        try {
+          const r = await fetch('/api/okta-config', { cache: 'no-store' });
+          if (r.ok) {
+            const j = await r.json();
+            issuer = j.issuer || issuer;
+            clientId = j.clientId || clientId;
+          }
+        } catch {}
+      }
+      return { issuer, clientId };
+    }
+
+    async function initOktaAuth(){
+      try {
+        const ns = window.OktaAuth || {};
+        const OktaAuthCtor = ns.OktaAuth;
+        if (!OktaAuthCtor) return null;
+        const cfg = await getOktaConfig();
+        if (!cfg.issuer || !cfg.clientId) return null;
+        const redirect = (window.location && window.location.origin) ? (window.location.origin + '/') : '/';
+        oktaAuth = new OktaAuthCtor({
+          issuer: cfg.issuer,
+          clientId: cfg.clientId,
+          redirectUri: redirect,
           scopes: ['openid','profile','email','groups'],
           pkce: true,
           tokenManager: { storage: 'sessionStorage' }
         });
-      }
-    } catch {}
+        return oktaAuth;
+      } catch { return null; }
+    }
 
     async function oktaHandleRedirect() {
       if (!oktaAuth) return;
@@ -407,6 +431,10 @@
 
     // Init
     (async function init(){
+      await initOktaAuth();
+      if (!oktaAuth) {
+        toast('Configure Okta first (OKTA_ISSUER & OKTA_CLIENT_ID).', 'bad');
+      }
       await oktaHandleRedirect();
       await refresh();
     })();
