@@ -131,6 +131,11 @@
 
     let expMs = null, timer = null, audit = [];
 
+    // Stop and clear the countdown interval
+    function stopTimer() {
+      if (timer) { clearInterval(timer); timer = null; }
+    }
+
     function toast(text, kind = "info") {
       const colors = {
         info: "bg-slate-800 text-slate-100 border border-slate-700",
@@ -189,6 +194,16 @@
         claimApprover.textContent = d.approver || '—';
         expMs = d.expiresAt;
 
+        // If no active admin after refresh, stop timer and reset UI
+        if (!expMs) {
+          stopTimer();
+          left.textContent = '—';
+          setRing(0);
+          statusBadge.textContent = 'No active admin';
+          statusBadge.className = 'mt-1 text-xs text-emerald-300';
+          return;
+        }
+
         if (timer) clearInterval(timer);
         timer = setInterval(() => {
           const ms = (expMs ? expMs - Date.now() : 0);
@@ -224,8 +239,13 @@
     };
 
     $("#revoke").onclick = async () => {
-      await fetch('/api/revoke');
+      await fetch('/api/revoke', { cache: 'no-store' });
       expMs = null;
+      stopTimer();
+      left.textContent = '—';
+      setRing(0);
+      statusBadge.textContent = 'No active admin';
+      statusBadge.className = 'mt-1 text-xs text-emerald-300';
       addAudit('REVOKE', 'manual');
       toast('Access revoked.', 'info');
       await refresh();
