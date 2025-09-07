@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JIT Admin + Okta — Temporary Access Demo</title>
+  <title>JIT Admin — Okta/Auth0 Integration</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <!-- Okta Auth JS (PKCE) -->
   <script src="https://global.oktacdn.com/okta-auth-js/7.6.3/okta-auth-js.umd.js"></script>
+  <!-- Auth0 SPA SDK -->
+  <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
   <style>
     :root { color-scheme: dark; }
     html,body{ height:100%; }
@@ -22,12 +24,17 @@
     .test-fail{ color:#f87171 }
   </style>
   <script>
-    // ====== EDIT THESE WITH YOUR OKTA APP DETAILS ======
-    // Example issuer: https://dev-12345678.okta.com/oauth2/default
-    window.OKTA_ISSUER = "https://YOUR_OKTA_DOMAIN.okta.com/oauth2/default";
-    window.OKTA_CLIENT_ID = "YOUR_OKTA_CLIENT_ID";
-    // Ensure this origin is added as a Trusted Origin (CORS & Redirect) in Okta Admin.
-    // ================================================
+    // ====== Optional inline config (leave blank to use /api/*-config env vars) ======
+    // OKTA: Example issuer: https://dev-12345678.okta.com/oauth2/default
+    window.OKTA_ISSUER = window.OKTA_ISSUER || "";       // e.g., "https://dev-xxx.okta.com/oauth2/default"
+    window.OKTA_CLIENT_ID = window.OKTA_CLIENT_ID || ""; // e.g., "0oa1abcDEFgHij..."
+
+    // AUTH0: Domain (your-tenant.us.auth0.com) and Client ID
+    window.AUTH0_DOMAIN = window.AUTH0_DOMAIN || "";     // e.g., "your-tenant.us.auth0.com"
+    window.AUTH0_CLIENT_ID = window.AUTH0_CLIENT_ID || ""; // e.g., "AbCdEf..."
+
+    // Optional: namespaced claim that contains roles/groups in Auth0 ID token
+    window.AUTH0_ROLES_CLAIM = window.AUTH0_ROLES_CLAIM || "https://example.com/roles";
   </script>
 </head>
 <body class="min-h-full bg-slate-950 text-slate-100 bg-grid">
@@ -40,12 +47,12 @@
             <path d="M12 3v18"/><path d="M5 9l7-6 7 6"/><path d="M5 15l7 6 7-6"/>
           </svg>
         </div>
-        <span class="font-semibold tracking-tight">JIT Admin + Okta</span>
-        <span class="text-xs text-slate-400 border border-slate-700 rounded-md px-2 py-0.5">5‑minute role</span>
+        <span class="font-semibold tracking-tight">JIT Admin</span>
+        <span id="providerBadge" class="text-xs text-slate-400 border border-slate-700 rounded-md px-2 py-0.5">provider: —</span>
       </div>
       <div class="flex items-center gap-3 text-sm">
-        <button id="oktaLogin" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50">Sign in with Okta</button>
-        <button id="oktaLogout" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50" disabled>Sign out</button>
+        <button id="btnLogin" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50">Sign in</button>
+        <button id="btnLogout" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50" disabled>Sign out</button>
       </div>
     </div>
   </header>
@@ -55,15 +62,15 @@
     <section class="grid lg:grid-cols-3 gap-6">
       <div class="lg:col-span-2 rounded-2xl p-6 bg-slate-900/70 ring-1 ring-slate-800 shadow-2xl shadow-black/40">
         <h1 class="text-2xl font-semibold">🔐 Just‑In‑Time Admin Access</h1>
-        <p class="mt-1 text-slate-400">First <span class="font-medium text-slate-200">Sign in with Okta</span>, then click <span class="font-medium text-slate-200">Request Admin</span> to receive a short‑lived JWT with <code class="px-1.5 py-0.5 bg-slate-800 rounded">roles:['admin']</code>. It expires automatically in 5 minutes (or revoke any time).</p>
+        <p class="mt-1 text-slate-400">Sign in with <span id="idpName" class="font-medium text-slate-200">your IdP</span>, then click <span class="font-medium text-slate-200">Request Admin</span> to receive a short‑lived JWT with <code class="px-1.5 py-0.5 bg-slate-800 rounded">roles:['admin']</code>. It expires in 5 minutes (or revoke any time).</p>
 
-        <!-- Okta identity -->
+        <!-- Identity -->
         <div class="mt-4 p-4 rounded-xl bg-slate-900/70 border border-slate-800">
-          <div class="text-sm text-slate-400">Okta Identity</div>
+          <div class="text-sm text-slate-400">Identity</div>
           <div class="mt-2 flex flex-wrap items-center gap-2" aria-live="polite">
-            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">User: <b id="oktaUser" class="text-slate-200 font-medium">Not signed in</b></span>
-            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">Email: <b id="oktaEmail" class="text-slate-200 font-medium">—</b></span>
-            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">Groups: <b id="oktaGroups" class="text-slate-200 font-medium">—</b></span>
+            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">User: <b id="idpUser" class="text-slate-200 font-medium">Not signed in</b></span>
+            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">Email: <b id="idpEmail" class="text-slate-200 font-medium">—</b></span>
+            <span class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-sm">Groups/Roles: <b id="idpGroups" class="text-slate-200 font-medium">—</b></span>
           </div>
         </div>
 
@@ -157,286 +164,159 @@
     const $ = (sel) => document.querySelector(sel);
     const toastHost = $("#toastHost");
     const who = $("#who"), roles = $("#roles"), left = $("#left"), statusBadge=$("#statusBadge"), claimReason=$("#claimReason"), claimApprover=$("#claimApprover");
-    const oktaUserEl=$("#oktaUser"), oktaEmailEl=$("#oktaEmail"), oktaGroupsEl=$("#oktaGroups");
+    const idpUserEl=$("#idpUser"), idpEmailEl=$("#idpEmail"), idpGroupsEl=$("#idpGroups"), idpNameEl=$("#idpName"), providerBadge=$("#providerBadge");
     const ring = $("#ring");
     const circumference = 2 * Math.PI * 52; // r=52
 
-    let expMs = null, timer = null, audit = [], oktaSignedIn=false;
+    let expMs = null, timer = null, audit = [];
 
-    // ===== Okta Auth (PKCE) =====
-    let oktaAuth = null;
+    function toast(text, kind = "info") {
+      const colors = { info: "bg-slate-800 text-slate-100 border border-slate-700", ok: "bg-emerald-600 text-white", bad: "bg-rose-600 text-white" };
+      const el = document.createElement("div"); el.className = `px-3 py-2 rounded-lg shadow ${colors[kind]}`; el.textContent = text; toastHost.appendChild(el); setTimeout(() => el.remove(), 2600);
+    }
+    function stopTimer(){ if (timer) { clearInterval(timer); timer = null; } }
+    function setRing(remainingMs) { if (!expMs || remainingMs <= 0) { ring.style.strokeDashoffset = circumference; return; } const total = 5 * 60 * 1000; const frac = Math.max(0, Math.min(1, remainingMs / total)); ring.style.strokeDashoffset = circumference * (1 - frac); }
+    function fmt(ms) { if (!ms || ms <= 0) return "expired"; const s = Math.floor(ms/1000); const m = Math.floor(s/60); const r = s % 60; return `${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`; }
+    function addAudit(event, detail){ const row = { t: new Date().toISOString(), event, detail }; audit.unshift(row); renderAudit(); }
+    function renderAudit(){ const host = $("#auditRows"); host.innerHTML = audit.map(a => `<tr><td class="py-2 pr-4 text-slate-300">${new Date(a.t).toLocaleTimeString()}</td><td class="py-2 pr-4">${a.event}</td><td class="py-2 pr-4 text-slate-300">${a.detail}</td></tr>`).join(""); }
 
+    // ------- Config Fetchers -------
     async function getOktaConfig(){
-      let issuer = window.OKTA_ISSUER;
-      let clientId = window.OKTA_CLIENT_ID;
-      const needsFetch = !issuer || issuer.includes('YOUR_OKTA') || !clientId || clientId.includes('YOUR_OKTA');
-      if (needsFetch) {
-        try {
-          const r = await fetch('/api/okta-config', { cache: 'no-store' });
-          if (r.ok) {
-            const j = await r.json();
-            issuer = j.issuer || issuer;
-            clientId = j.clientId || clientId;
-          }
-        } catch {}
+      let issuer = window.OKTA_ISSUER; let clientId = window.OKTA_CLIENT_ID;
+      if (!issuer || !clientId) {
+        try { const r = await fetch('/api/okta-config', { cache: 'no-store' }); if (r.ok){ const j = await r.json(); issuer = issuer || j.issuer; clientId = clientId || j.clientId; } } catch {}
       }
       return { issuer, clientId };
     }
+    async function getAuth0Config(){
+      let domain = window.AUTH0_DOMAIN; let clientId = window.AUTH0_CLIENT_ID; let rolesClaim = window.AUTH0_ROLES_CLAIM || 'https://example.com/roles';
+      if (!domain || !clientId) {
+        try { const r = await fetch('/api/auth0-config', { cache: 'no-store' }); if (r.ok){ const j = await r.json(); domain = domain || j.domain; clientId = clientId || j.clientId; rolesClaim = j.rolesClaim || rolesClaim; } } catch {}
+      }
+      return { domain, clientId, rolesClaim };
+    }
 
-    async function initOktaAuth(){
-      try {
-        const ns = window.OktaAuth || {};
-        const OktaAuthCtor = ns.OktaAuth;
-        if (!OktaAuthCtor) return null;
-        const cfg = await getOktaConfig();
-        if (!cfg.issuer || !cfg.clientId) return null;
+    // ------- Provider Abstraction -------
+    const provider = { name: 'none', signedIn: false, signIn: async()=>{}, signOut: async()=>{}, handleRedirect: async()=>{}, getIdentity: async()=>({}) };
+    let oktaAuth = null; let auth0Client = null; let rolesClaimNs = 'https://example.com/roles';
+
+    async function initProvider(){
+      // Try Okta first
+      const oktaCfg = await getOktaConfig();
+      const OktaAuthCtor = (window.OktaAuth||{}).OktaAuth;
+      if (OktaAuthCtor && oktaCfg.issuer && oktaCfg.clientId) {
         const redirect = (window.location && window.location.origin) ? (window.location.origin + '/') : '/';
-        oktaAuth = new OktaAuthCtor({
-          issuer: cfg.issuer,
-          clientId: cfg.clientId,
-          redirectUri: redirect,
-          scopes: ['openid','profile','email','groups'],
-          pkce: true,
-          tokenManager: { storage: 'sessionStorage' }
-        });
-        return oktaAuth;
-      } catch { return null; }
-    }
-
-    async function oktaHandleRedirect() {
-      if (!oktaAuth) return;
-      // If returning from Okta with code/state, parse tokens
-      const hasParams = /[?&](code|state)=/.test(window.location.search);
-      if (hasParams) {
-        try {
-          const { tokens } = await oktaAuth.token.parseFromUrl();
-          oktaAuth.tokenManager.setTokens(tokens);
-          // Clean URL
-          const url = new URL(window.location);
-          url.search = '';
-          history.replaceState({}, '', url);
-        } catch (e) {
-          console.warn('Okta parse error', e);
-        }
+        oktaAuth = new OktaAuthCtor({ issuer: oktaCfg.issuer, clientId: oktaCfg.clientId, redirectUri: redirect, scopes: ['openid','profile','email','groups'], pkce: true, tokenManager: { storage: 'sessionStorage' }});
+        provider.name = 'okta'; idpNameEl.textContent = 'Okta'; providerBadge.textContent = 'provider: Okta';
+        provider.signIn = async ()=> oktaAuth.signInWithRedirect();
+        provider.signOut = async ()=> { try{ await oktaAuth.signOut(); }catch{} };
+        provider.handleRedirect = async ()=>{
+          const hasParams = /[?&](code|state)=/.test(window.location.search);
+          if (hasParams) { try { const { tokens } = await oktaAuth.token.parseFromUrl(); oktaAuth.tokenManager.setTokens(tokens); const url = new URL(window.location); url.search=''; history.replaceState({},'',url); } catch(e) { console.warn('Okta parse error', e);} }
+          const { idToken } = await oktaAuth.tokenManager.getTokens();
+          provider.signedIn = !!idToken;
+          if (idToken) return { name: idToken.claims.name || idToken.claims.sub, email: idToken.claims.email, groups: idToken.claims.groups || [], raw: idToken.claims };
+          return null;
+        };
+        provider.getIdentity = async ()=>{
+          const { idToken } = await oktaAuth.tokenManager.getTokens();
+          if (!idToken) return null;
+          return { name: idToken.claims.name || idToken.claims.sub, email: idToken.claims.email, groups: idToken.claims.groups || [], raw: idToken.claims };
+        };
+        return provider;
       }
-      const { idToken } = await oktaAuth.tokenManager.getTokens();
-      if (idToken) {
-        oktaSignedIn = true;
-        $("#oktaLogin").disabled = true;
-        $("#oktaLogout").disabled = false;
-        oktaUserEl.textContent = idToken.claims.name || idToken.claims.sub || '(no name)';
-        oktaEmailEl.textContent = idToken.claims.email || '—';
-        const groups = idToken.claims.groups || [];
-        oktaGroupsEl.textContent = groups.length ? groups.slice(0,8).join(', ') + (groups.length>8 ? '…' : '') : '—';
-        $("#req").disabled = false; // enable JIT once Okta is signed in
-        $("#revoke").disabled = false;
-      } else {
-        oktaSignedIn = false;
-        $("#oktaLogin").disabled = false;
-        $("#oktaLogout").disabled = true;
-        oktaUserEl.textContent = 'Not signed in';
-        oktaEmailEl.textContent = '—';
-        oktaGroupsEl.textContent = '—';
-        $("#req").disabled = true;
-        $("#revoke").disabled = true;
+      // Fallback to Auth0
+      const a0 = await getAuth0Config(); rolesClaimNs = a0.rolesClaim || rolesClaimNs;
+      if (a0.domain && a0.clientId && window.createAuth0Client) {
+        const redirect = (window.location && window.location.origin) ? (window.location.origin + '/') : '/';
+        auth0Client = await window.createAuth0Client({ domain: a0.domain, clientId: a0.clientId, authorizationParams: { redirect_uri: redirect, scope: 'openid profile email' } });
+        provider.name = 'auth0'; idpNameEl.textContent = 'Auth0'; providerBadge.textContent = 'provider: Auth0';
+        provider.signIn = async ()=> auth0Client.loginWithRedirect();
+        provider.signOut = async ()=> auth0Client.logout({ logoutParams: { returnTo: redirect } });
+        provider.handleRedirect = async ()=>{
+          if (window.location.search.includes('code=')) { try { await auth0Client.handleRedirectCallback(); const url=new URL(window.location); url.search=''; history.replaceState({},'',url); } catch(e) { console.warn('Auth0 parse error', e);} }
+          const isAuth = await auth0Client.isAuthenticated(); provider.signedIn = isAuth;
+          if (!isAuth) return null;
+          const user = await auth0Client.getUser();
+          const claims = await auth0Client.getIdTokenClaims();
+          const groups = extractGroupsFromClaims(claims);
+          return { name: user.name || user.nickname || user.sub, email: user.email || '—', groups, raw: claims };
+        };
+        provider.getIdentity = async ()=>{
+          const isAuth = await auth0Client.isAuthenticated(); if (!isAuth) return null;
+          const user = await auth0Client.getUser(); const claims = await auth0Client.getIdTokenClaims(); const groups = extractGroupsFromClaims(claims);
+          return { name: user.name || user.nickname || user.sub, email: user.email || '—', groups, raw: claims };
+        };
+        return provider;
       }
+      providerBadge.textContent = 'provider: —';
+      return provider;
     }
 
-    $("#oktaLogin").onclick = async () => {
-      if (!oktaAuth) {
-        alert('Configure OKTA_ISSUER and OKTA_CLIENT_ID at the top of index.html');
-        return;
-      }
-      await oktaAuth.signInWithRedirect();
-    };
-
-    $("#oktaLogout").onclick = async () => {
-      if (!oktaAuth) return;
-      try { await oktaAuth.signOut(); } catch {}
-      oktaSignedIn = false;
-      await oktaHandleRedirect();
-      toast('Signed out of Okta.', 'info');
-    };
-
-    // ===== UI Helpers =====
-    function toast(text, kind = "info") {
-      const colors = {
-        info: "bg-slate-800 text-slate-100 border border-slate-700",
-        ok: "bg-emerald-600 text-white",
-        bad: "bg-rose-600 text-white"
-      };
-      const el = document.createElement("div");
-      el.className = `px-3 py-2 rounded-lg shadow ${colors[kind]}`;
-      el.textContent = text;
-      toastHost.appendChild(el);
-      setTimeout(() => el.remove(), 2600);
+    function extractGroupsFromClaims(claims){
+      if (!claims) return [];
+      // Common places for roles/groups in Auth0
+      const keys = Object.keys(claims);
+      const direct = (claims.groups || claims.roles || claims.permissions) || [];
+      if (Array.isArray(direct) && direct.length) return direct;
+      // Namespaced claims ending with /groups or /roles
+      const nsMatch = keys.find(k => /\/(groups|roles)$/i.test(k));
+      if (nsMatch && Array.isArray(claims[nsMatch])) return claims[nsMatch];
+      // Custom configured namespace
+      if (claims[rolesClaimNs] && Array.isArray(claims[rolesClaimNs])) return claims[rolesClaimNs];
+      return [];
     }
 
-    function stopTimer(){ if (timer) { clearInterval(timer); timer = null; } }
-
-    function setRing(remainingMs) {
-      if (!expMs || remainingMs <= 0) {
-        ring.style.strokeDashoffset = circumference;
-        return;
-      }
-      const total = 5 * 60 * 1000; // 5 min
-      const frac = Math.max(0, Math.min(1, remainingMs / total));
-      ring.style.strokeDashoffset = circumference * (1 - frac);
-    }
-
-    function fmt(ms) {
-      if (!ms || ms <= 0) return "expired";
-      const s = Math.floor(ms/1000);
-      const m = Math.floor(s/60);
-      const r = s % 60;
-      return `${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`;
-    }
-
-    function addAudit(event, detail) {
-      const row = { t: new Date().toISOString(), event, detail };
-      audit.unshift(row);
-      renderAudit();
-    }
-
-    function renderAudit() {
-      const host = $("#auditRows");
-      host.innerHTML = audit.map(a => `
-        <tr>
-          <td class="py-2 pr-4 text-slate-300">${new Date(a.t).toLocaleTimeString()}</td>
-          <td class="py-2 pr-4">${a.event}</td>
-          <td class="py-2 pr-4 text-slate-300">${a.detail}</td>
-        </tr>`).join("");
-    }
-
-    async function refresh() {
+    async function refreshSessionUI(){
       try {
-        const r = await fetch('/api/whoami', { cache: 'no-store' });
-        const d = await r.json();
-        who.textContent = d.user || '—';
-        const roleList = (d.roles && d.roles.length) ? d.roles.join(', ') : '—';
-        roles.textContent = roleList;
-        claimReason.textContent = d.reason || '—';
-        claimApprover.textContent = d.approver || '—';
+        const r = await fetch('/api/whoami', { cache: 'no-store' }); const d = await r.json();
+        who.textContent = d.user || '—'; roles.textContent = (d.roles && d.roles.length) ? d.roles.join(', ') : '—';
+        claimReason.textContent = d.reason || '—'; claimApprover.textContent = d.approver || '—';
         expMs = d.expiresAt;
-
-        if (!expMs) {
-          stopTimer();
-          left.textContent = '—';
-          setRing(0);
-          statusBadge.textContent = 'No active admin';
-          statusBadge.className = 'mt-1 text-xs text-emerald-300';
-          return;
-        }
-
+        if (!expMs) { stopTimer(); left.textContent = '—'; setRing(0); statusBadge.textContent = 'No active admin'; statusBadge.className = 'mt-1 text-xs text-emerald-300'; return; }
         stopTimer();
-        timer = setInterval(() => {
-          const ms = (expMs ? expMs - Date.now() : 0);
-          left.textContent = fmt(ms);
-          setRing(ms);
-          if (ms <= 0) {
-            statusBadge.textContent = 'No active admin';
-            statusBadge.className = 'mt-1 text-xs text-emerald-300';
-            stopTimer();
-          } else {
-            statusBadge.textContent = 'Admin active';
-            statusBadge.className = 'mt-1 text-xs text-indigo-300';
-          }
-        }, 1000);
-      } catch (e) {
-        who.textContent = '—'; roles.textContent = '—'; left.textContent = '—';
-      }
+        timer = setInterval(() => { const ms = (expMs ? expMs - Date.now() : 0); left.textContent = fmt(ms); setRing(ms); if (ms <= 0) { statusBadge.textContent = 'No active admin'; statusBadge.className = 'mt-1 text-xs text-emerald-300'; stopTimer(); } else { statusBadge.textContent = 'Admin active'; statusBadge.className = 'mt-1 text-xs text-indigo-300'; } }, 1000);
+      } catch { who.textContent = '—'; roles.textContent = '—'; left.textContent = '—'; }
     }
 
-    // ===== Buttons =====
+    // ------- Wiring Buttons -------
+    $("#btnLogin").onclick = async () => { if (provider.name==='none'){ toast('Configure Okta or Auth0 first.', 'bad'); return; } await provider.signIn(); };
+    $("#btnLogout").onclick = async () => { if (provider.name==='none') return; try{ await provider.signOut(); }catch{} await onAuthStateChanged(); toast('Signed out.', 'info'); };
+
     $("#req").onclick = async () => {
-      if (!oktaSignedIn) { toast('Sign in with Okta first.', 'bad'); return; }
-      const user = $("#user").value.trim() || 'demo';
-      const reason = $("#reason").value.trim();
-      const approver = $("#approver").value.trim();
-      const params = new URLSearchParams();
-      params.set('user', user);
-      if (reason) params.set('reason', reason);
-      if (approver) params.set('approver', approver);
-      const r = await fetch(`/api/request-admin?${params.toString()}`);
-      const d = await r.json();
-      expMs = d.expiresAt || null;
-      addAudit('REQUEST_ADMIN', `${user} (${reason || 'no reason'})`);
-      toast('Admin granted (5 min).', 'ok');
-      await refresh();
-    };
+      if (!provider.signedIn) { toast('Sign in first.', 'bad'); return; }
+      const user = $("#user").value.trim() || 'demo'; const reason = $("#reason").value.trim(); const approver = $("#approver").value.trim();
+      const params = new URLSearchParams(); params.set('user', user); if (reason) params.set('reason', reason); if (approver) params.set('approver', approver);
+      const r = await fetch(`/api/request-admin?${params.toString()}`); const d = await r.json(); expMs = d.expiresAt || null;
+      addAudit('REQUEST_ADMIN', `${user} (${reason || 'no reason'})`); toast('Admin granted (5 min).', 'ok'); await refreshSessionUI(); };
 
-    $("#revoke").onclick = async () => {
-      await fetch('/api/revoke', { cache: 'no-store' });
-      expMs = null;
-      stopTimer();
-      left.textContent = '—';
-      setRing(0);
-      statusBadge.textContent = 'No active admin';
-      statusBadge.className = 'mt-1 text-xs text-emerald-300';
-      addAudit('REVOKE', 'manual');
-      toast('Access revoked.', 'info');
-      await refresh();
-    };
+    $("#revoke").onclick = async () => { await fetch('/api/revoke', { cache: 'no-store' }); expMs = null; stopTimer(); left.textContent = '—'; setRing(0); statusBadge.textContent = 'No active admin'; statusBadge.className = 'mt-1 text-xs text-emerald-300'; addAudit('REVOKE', 'manual'); toast('Access revoked.', 'info'); await refreshSessionUI(); };
 
-    $("#adminAction").onclick = async () => {
-      const el = $("#actionMsg");
-      el.textContent = '…';
-      const r = await fetch('/api/admin-action');
-      const d = await r.json();
-      if (d.ok) {
-        el.innerHTML = `<span class="text-emerald-300">✅ ${d.message}</span>`;
-        addAudit('ADMIN_ACTION', 'success');
-        toast('Admin action succeeded.', 'ok');
-      } else {
-        el.innerHTML = `<span class="text-rose-300">⛔ ${d.error || 'Denied'}</span>`;
-        addAudit('ADMIN_ACTION', 'denied');
-        toast('Denied. Not an admin or token expired.', 'bad');
-      }
-    };
+    $("#adminAction").onclick = async () => { const el = $("#actionMsg"); el.textContent = '…'; const r = await fetch('/api/admin-action'); const d = await r.json(); if (d.ok) { el.innerHTML = `<span class="text-emerald-300">✅ ${d.message}</span>`; addAudit('ADMIN_ACTION', 'success'); toast('Admin action succeeded.', 'ok'); } else { el.innerHTML = `<span class="text-rose-300">⛔ ${d.error || 'Denied'}</span>`; addAudit('ADMIN_ACTION', 'denied'); toast('Denied. Not an admin or token expired.', 'bad'); } };
 
-    $("#copyAudit").onclick = async () => {
-      await navigator.clipboard.writeText(JSON.stringify(audit, null, 2));
-      toast('Audit JSON copied.', 'info');
-    };
+    $("#copyAudit").onclick = async () => { await navigator.clipboard.writeText(JSON.stringify(audit, null, 2)); toast('Audit JSON copied.', 'info'); };
 
-    // ===== Self‑tests =====
+    async function onAuthStateChanged(){
+      const ident = await provider.handleRedirect();
+      provider.signedIn = !!ident;
+      if (ident){ $("#btnLogin").disabled = true; $("#btnLogout").disabled = false; $("#req").disabled = false; $("#revoke").disabled = false; idpUserEl.textContent = ident.name || '(no name)'; idpEmailEl.textContent = ident.email || '—'; idpGroupsEl.textContent = (ident.groups && ident.groups.length) ? ident.groups.slice(0,8).join(', ') + (ident.groups.length>8?'…':'') : '—'; }
+      else { $("#btnLogin").disabled = false; $("#btnLogout").disabled = true; $("#req").disabled = true; $("#revoke").disabled = true; idpUserEl.textContent = 'Not signed in'; idpEmailEl.textContent = '—'; idpGroupsEl.textContent = '—'; }
+    }
+
+    // ------- Self‑tests -------
     $("#runTests").onclick = async () => {
-      const out = $("#testResults");
-      out.innerHTML = '';
-      function li(msg, pass){
-        const li = document.createElement('li');
-        li.innerHTML = pass ? `✅ <span class="test-pass">${msg}</span>` : `⛔ <span class="test-fail">${msg}</span>`;
-        out.appendChild(li);
-      }
-      try {
-        // Test 1: whoami endpoint reachable
-        const r1 = await fetch('/api/whoami', { cache: 'no-store' });
-        const j1 = await r1.json();
-        li('whoami returns JSON', !!j1 && typeof j1 === 'object');
-      } catch { li('whoami returns JSON', false); }
-
-      try {
-        // Test 2: URL building does not depend on location.origin/new URL
-        const p = new URLSearchParams({ user: 'test', reason: 'x', approver: 'y' }).toString();
-        const path = `/api/request-admin?${p}`;
-        li('request-admin path constructed (relative URL)', /^\/api\/request-admin\?/.test(path));
-      } catch { li('request-admin path constructed (relative URL)', false); }
-
-      try {
-        // Test 3: Timer stop function exists and clears interval
-        stopTimer();
-        li('stopTimer is callable', true);
-      } catch { li('stopTimer is callable', false); }
+      const out = $("#testResults"); out.innerHTML = '';
+      function li(msg, pass){ const li = document.createElement('li'); li.innerHTML = pass ? `✅ <span class="test-pass">${msg}</span>` : `⛔ <span class="test-fail">${msg}</span>`; out.appendChild(li); }
+      try { const r1 = await fetch('/api/whoami', { cache: 'no-store' }); const j1 = await r1.json(); li('whoami returns JSON', !!j1 && typeof j1 === 'object'); } catch { li('whoami returns JSON', false); }
+      try { const p = new URLSearchParams({ user: 'test', reason: 'x', approver: 'y' }).toString(); const path = `/api/request-admin?${p}`; li('request-admin path constructed (relative URL)', /^\/api\/request-admin\?/.test(path)); } catch { li('request-admin path constructed (relative URL)', false); }
+      li('provider detected', provider.name==='okta' || provider.name==='auth0');
     };
 
-    // Init
+    // ------- Init -------
     (async function init(){
-      await initOktaAuth();
-      if (!oktaAuth) {
-        toast('Configure Okta first (OKTA_ISSUER & OKTA_CLIENT_ID).', 'bad');
-      }
-      await oktaHandleRedirect();
-      await refresh();
+      await initProvider();
+      await onAuthStateChanged();
+      await refreshSessionUI();
     })();
   </script>
 </body>
